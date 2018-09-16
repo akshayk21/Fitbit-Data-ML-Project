@@ -1,0 +1,130 @@
+---
+title: "Fitbit Data ML Project"
+author: "Akshay Khanna"
+date: "9/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#myPackages <- c("ggplot2","AppliedPredictiveModeling", "caret", "ElemStatLearn", "pgmm", "rpart", "gbm", "lubridate", "forecast", "e1071")
+#install.packages(myPackages)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+```{r}
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")
+
+dat <- read.csv("pml-training.csv", na.strings = c("NA","")) #Read Training Data
+finalTestingData <- read.csv("pml-testing.csv", na.strings = c("NA","")) #Read Final Testing Data. Quiz questions based on this data.
+#head(dat)
+#colnames(dat)
+```
+
+## Data Cleaning
+
+* We remove the columns that are not related to the final outcome: classe.
+* Then we remove all the columns which contain NA
+* This is done for both the dat (which is eventually split into training and testing datasets) as well as finalTestingData datasets.
+```{r}
+#Excluding columns names that contain: name/timestamp/window/x
+colNotRequired <- grep("name|timestamp|window|X", colnames(dat), value=F)
+dat <- dat[,-colNotRequired]
+finalTestingData <- finalTestingData[,-colNotRequired]
+
+#Excluding columns if all the data in columns equals NA
+dat <- dat[,colSums(is.na(dat))==0]
+finalTestingData <- finalTestingData[,colSums(is.na(finalTestingData))==0]
+
+#Checking if length of both traing and testing sets is same
+length(colnames(dat))
+length(colnames(finalTestingData))
+```
+
+## Cross Validation
+* To test our models, we divide dat into training and testing data sets in 70:30 ratio.
+* training dataset is used to train the models
+* testing data sets is used to test the models' accuracy
+```{r}
+library(caret)
+#Cross Validation. Splitting training data into training and testing data in 70:30 ratio.
+set.seed(111)
+inTrain = createDataPartition(dat$classe, p = 3/4)[[1]]
+training = dat[ inTrain,]
+testing = dat[-inTrain,]
+```
+
+## Expected Out of Sample Error
+Out of sample error, as opposed to the in sample error, is the error rate that we get on a new data set that was not  used to train the model. This is also called generalization error. Out of sample error is always more than that of the in sample error because the model was trained using the samples and it gets tuned to the in sample error. In our example the error from the training set is the in-sample error and that from the testing set is the out of sample error.
+
+## The Analysis
+I have chosen to predict the outcome by training the data set using three different models, viz., Decision Tree, Random Forest and Random Forest post performing the principal component analysis (PCA) and then chosing the best to predict the values based on the performance of each of the these models.
+
+### Model 1: Decision Tree
+```{r}
+library(rpart)
+library(rpart.plot)
+#We might get different results if we use train function from the caret package with method = rpart as compared to rpart function from rpart package. This is primarily because of different sets of default parameters for the two functions. Hence, it is always better to use the specific function for a model than using a generic train function.
+mod.rpart <- rpart(classe ~ ., data = training, method = "class")
+predict.rpart <- predict(mod.rpart,testing, type = "class")
+rpart.plot(mod.rpart)
+```
+
+### Model 2: Random Forest
+```{r}
+library(randomForest)
+mod.rf <- randomForest::randomForest(classe ~ ., data = training)
+predict.rf <- predict(mod.rf, testing)
+```
+
+### Model 3: PCA Random Forest
+```{r}
+preproc <- preProcess((training[,-grep("classe", colnames(training), value = F)]), method="pca", thresh = 0.99) #threshold is set so that 99% of the variance is explained by the principal components
+preproc
+
+trainPC <- predict(preproc, training[,-grep("classe", colnames(training), value = F)])
+
+mod.PCARF <- randomForest::randomForest(training$classe~., data=trainPC)
+
+testPC <- predict(preproc, testing[,-grep("classe", colnames(training), value = F)])
+predict.PCARF <- predict(mod.PCARF, testPC)
+
+```
+
+## Evaluation of Models
+```{r}
+results <- data.frame(matrix(nrow = 3,ncol = 2))
+row.names(results) <- c("Decision Trees", "Random Forest", "PCA Followed by Random Forest")
+colnames(results) <- c("Accuracy", "Out-of-sample Error (1-Accuracy)")
+results[1,1] <- confusionMatrix(testing$classe,predict.rpart)$overall[1]
+results[2,1] <- confusionMatrix(testing$classe,predict.rf)$overall[1]
+results[3,1] <- confusionMatrix(testing$classe, predict.PCARF)$overall[1]
+results$`Out-of-sample Error (1-Accuracy)` <- 1-results$Accuracy
+results
+```
+
+* Thus, from the above analyses, it is clear that the second model, random forest is the most accurate model and has the least out of sample error.
+
+* Therefore, we will use random forest model to predict the values on the final test data.
+
+## Final Prediction
+
+* Final prediction is based upon the random forest algorithm which has >99% accuracy
+```{r}
+predict.final <- predict(mod.rf, finalTestingData)
+predict.final
+```
